@@ -33,11 +33,12 @@ class AGOLHandler(object):
       -Adds/Deletes features from Feature Service
     """
 
-    def __init__(self, args):
-        self.username = args.username
-        self.password = args.password
-        self.sourcePortal = args.sourcePortal
+    def __init__(self, username, password, sourcePortal):
+        self.username = username
+        self.password = password
+        self.sourcePortal = sourcePortal
         self.token, self.http, self.expires = self.get_token()
+        self._user_items = self.get_user_content()
 
     def get_token(self, exp=60):  # expires in 60 minutes
         parameters = urllib.parse.urlencode({'username': self.username,
@@ -82,13 +83,14 @@ class AGOLHandler(object):
         # except ValueError as e:
         #     print('An unspecified error occurred.')
         #     print(e)
-        return AGOLSearchResults(self, json_response)
+        return AGOLItems(self, json_response)
 
     def get_user_content(self):
         parameters = urllib.parse.urlencode({'token': self.token, 'f': 'json'}).encode("utf-8")
         request = self.sourcePortal + '/sharing/rest/content/users/' + self.username + '?'
         json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
-        return json_response
+        #return json_response
+        return AGOLItems(self, json_response['items']).results
 
     def get_item_description(self, item_id):
         '''Returns the description for a Portal for ArcGIS item.'''
@@ -189,11 +191,48 @@ class AGOLHandler(object):
             print('An unspecified error occurred.')
             print(e)
 
+    @property
+    def user_items(self):
+        return self._user_items
 
 class AGOLError(object):
 
     def __init__(self):
         pass
+
+
+class FeatureService(object):
+    """
+    Wrapper around the AGOLHandler create service function.
+    """
+    def __init__(self, feature_service_url, ):
+        self._feature_service_url = feature_service_url
+        self._feature_count = self.get_feature_count()
+
+    def get_feature_count(self):
+        parameters = urllib.parse.urlencode({'where': '1=1',
+                                             'returnCountOnly': 'true',
+                                             'f': 'json'}).encode("utf-8")
+        jsonResponse = json.loads(urllib.request.urlopen(self._feature_service_url + '/query?',
+                                  parameters).read().decode("utf-8"))
+        return jsonResponse['count']
+    
+    def write_jsonfile(raw_json, filename='\json_file'):
+        with open(filename + '.json', 'w') as outfile:
+            json.dump(raw_json, outfile, sort_keys=False, indent=4, ensure_ascii=False)
+
+    @property
+    def feature_count(self):
+        return self._feature_count
+
+    @property
+    def feature_service_json(self, where='1-1', fields='*'):
+        parameters = urllib.parse.urlencode({'where': where,
+                                             'returnGeometry': 'true',
+                                             'fields': fields,
+                                             'f': 'json'}).encode("utf-8")
+        jsonResponse = json.loads(urllib.request.urlopen(self._feature_service_url, parameters).read().decode("utf-8"))
+        return jsonResponse
 
 
 class AGOLFeatureService(object):
@@ -216,7 +255,7 @@ class AGOLFeatureService(object):
         return self.url
 
 
-class AGOLSearchResults(object):
+class AGOLItems(object):
     """
     Wrapper around the AGOLHandler search function.
     """
@@ -224,8 +263,8 @@ class AGOLSearchResults(object):
         self._agol_handler = agol_handler
         self._response = json_response
         self._results = []
-        for json_result in json_response['results']:
-            self._results.append(AGOLSearchResult(agol_handler, json_result))
+        for json_result in json_response:
+            self._results.append(AGOLItem(agol_handler, json_result))
 
     def some_function(self):
         pass
@@ -239,24 +278,65 @@ class AGOLSearchResults(object):
         return self._results
 
 
-class AGOLSearchResult(object):
+class AGOLItem(object):
     """
     Each result in AGOLSearchResults is of this type.
     """
 
-    def __init__(self, agol_handler, search_results, json_result):
+    def __init__(self, agol_handler, json_result):
         self._agol_handler = agol_handler
-        self._result = json_result
+        self._json_result = json_result
+        self._type = json_result.get('type', None)
+        self._owner = json_result.get('owner', None)
         self._id = json_result.get('id', None)
+        self._title = json_result.get('title', None)
+        self._name = json_result.get('name', None)
+        self._description = json_result.get('description', None)
+        self._access = json_result.get('access', None)
+        self._typeKeywords = json_result.get('typeKeywords', None)
+        self._tags = json_result.get('tags', None)
         self._url = json_result.get('url', None)
+        self._spatialReference = json_result.get('spatialReference', None)
 
     @property
-    def raw_response(self):
-        return self._result
+    def raw_result(self):
+        return self._json_result
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def owner(self):
+        return self._owner
 
     @property
     def id(self):
         return self._id
+
+    @property
+    def title(self):
+        return self._title
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def description(self):
+        return self._description
+
+    @property
+    def access(self):
+        return self._access
+
+    @property
+    def typeKeywords(self):
+        return self._typeKeywords
+
+    @property
+    def tags(self):
+        return self._tags
 
     @property
     def url(self):
