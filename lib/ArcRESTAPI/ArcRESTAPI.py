@@ -33,7 +33,7 @@ class AGOLHandler(object):
       -Adds/Deletes features from Feature Service
     """
 
-    def __init__(self, username, password, sourcePortal):
+    def __init__(self, username, password, sourcePortal='https://www.arcgis.com/'):
         self.username = username
         self.password = password
         self.sourcePortal = sourcePortal
@@ -102,57 +102,6 @@ class AGOLHandler(object):
         json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
         return json_response
 
-    def create_feature_service(self, servicedefinition=None, servicename=None, spatialref=4326):
-        '''Returns the description for a Portal for ArcGIS item.
-        http://resources.arcgis.com/en/help/arcgis-rest-api/#/Add_Features/02r30000010m000000/'''
-        user_content_url = 'https://www.arcgis.com/sharing/rest/content/users/{}'.format(self.username)
-        title = servicedefinition.get('name', servicename)
-        parameters = urllib.parse.urlencode({'createParameters': {'name': title,
-                                                                  'capabilities': servicedefinition.get('capabilities', 'Query,Editing,Create,Update,Delete,Sync'),
-                                                                  'allowGeometryUpdates': 'true',
-                                                                  'units': 'esriMeters',
-                                                                  'editorTrackingInfo': {
-                                                                      'enableEditorTracking': 'true',
-                                                                      'enableOwnershipAccessControl': 'false',
-                                                                      'allowOthersToUpdate': 'true',
-                                                                      'allowOthersToDelete': 'true'
-                                                                  },
-                                                                  'syncEnabled': 'true',
-                                                                  'syncCapabilities': {
-                                                                      'supportsAsync': 'true',
-                                                                      'supportsRegisteringExistingData': 'true',
-                                                                      'supportsSyncDirectionControl': 'true',
-                                                                      'supportsPerLayerSync': 'true',
-                                                                      'supportsPerReplicaSync': 'true',
-                                                                      'supportsSyncModelNone': 'true',
-                                                                      'supportsRollbackOnFailure': 'true'
-                                                                  },
-                                                                  'spatialReference': {'wkid': servicedefinition.get('extent', spatialref)['spatialReference']['wkid']}
-                                                                  },
-                                             'outputType': 'featureService',
-                                             'f': 'json',
-                                             'token': self.token}).encode("utf-8")
-        create_service_request = user_content_url + '/CreateService?'
-        print(create_service_request)
-        try:
-            json_response = json.loads(urllib.request.urlopen(create_service_request, parameters).read().decode("utf-8"))
-            if 'error' not in json_response:
-                agol_feature_service = AGOLFeatureService(json_response['serviceurl'], layer_id=0, agol_handler=self)
-                if servicedefinition is not None: agol_feature_service.add_to_definition(servicedefinition)
-                return agol_feature_service
-            else:
-                if "already exists" in json_response['error']['message']:
-                    existing_service = self.search("title:{} owner:{}".format(title, self.username), token=self.token)
-                    print("Try 'Adding features' to existing service at: {}".format(existing_service.url))
-                else:
-                    print(json_response['error']['code'])
-                    print(json_response['error']['message'])
-                    for detail in json_response['error']['details']:
-                        print(detail)
-        except ValueError as e:
-            print('An unspecified error occurred.')
-            print(e)
-
     def delete_features(self, service_url, layer_id=0, where='ObjectId>0'):
         '''Returns the description for a Portal for ArcGIS item.
         http://resources.arcgis.com/en/help/arcgis-rest-api/#/Delete_Features/02r3000000w4000000/'''
@@ -194,6 +143,32 @@ class AGOLHandler(object):
             print('An unspecified error occurred.')
             print(e)
 
+    def copy_feature_server(self, feature_server_url, feature_server_name):
+        copied_feature_server = AGOLFeatureServer(feature_server_url, feature_server_name)
+        self.__create_feature_service(copied_feature_server.service_definition_template)
+        """copy service definition"""
+
+        """update layer definition"""
+
+        """add features"""
+
+    def __create_feature_service(self, serice_definition_template):
+        user_content_url = 'https://www.arcgis.com/sharing/rest/content/users/{}'.format(self.username)
+        parameters = urllib.parse.urlencode({'createParameters': serice_definition_template,
+                                             'outputType': 'featureService',
+                                             'f': 'json',
+                                             'token': self.token}).encode("utf-8")
+        create_service_request = user_content_url + '/createService?'
+        json_response = json.loads(urllib.request.urlopen(create_service_request, parameters).read().decode("utf-8"))
+        if 'error' not in json_response:
+            return AGOLFeatureServer(json_response['serviceurl'], agol_handler=self)
+        else:
+            print(json_response)
+            print('Code: {}'.format(json_response['error'].get('code', 'None')))
+            print('Message: {}'.format(json_response['error'].get('message', 'None')))
+            for detail in json_response['error'].get('details', []):
+                print(detail)
+
     @property
     def user_items(self):
         return self._user_items
@@ -212,24 +187,22 @@ class AGOLFeatureServer(object):
     """
     Wrapper around the AGOLHandler create service function.
     """
-    def __init__(self, feature_server_url, agol_handler=None):
-        self._agol_handler = agol_handler
+    def __init__(self, feature_server_url, feature_server_name, agol_handler=None):
         self._feature_server_url = feature_server_url
+        self._feature_server_name = feature_server_name
+        self._agol_handler = agol_handler
+        self._service_definition = self.__service_definition()
+        self._service_definition_template = self.__service_definition_template()
         self._item_id = ''
         self._layers = []
         self.get_layers()
 
     def get_layers(self):
         layers = []
-        for layer in self.feature_server_definition['layers']:
+        for layer in self.service_definition['layers']:
             fs_layer_url = self._feature_server_url + '/{}'.format(layer['id'])
             layers.append(AGOLFeatureServerLayer(fs_layer_url, self._agol_handler))
         self._layers = layers
-
-    def write_jsonfile(self, returned_json, filename='\json_file'):
-        print(returned_json)
-        with open(filename + '.json', 'w') as outfile:
-            json.dump(returned_json, outfile, sort_keys=False, indent=4, ensure_ascii=False)
 
     def add_layers_to_definition(self):
         layers = []
@@ -245,6 +218,18 @@ class AGOLFeatureServer(object):
         print(jsonResponse)
         return jsonResponse
 
+    def __service_definition(self):
+        parameters = urllib.parse.urlencode({'f': 'pjson'}).encode("utf-8")
+        request_url = self._feature_server_url
+        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
+        jsonResponse['name'] = self._feature_server_name
+        return jsonResponse
+
+    def __service_definition_template(self):
+        """only need specific portions of the entire service definition to create a 'copy'"""
+        # self._service_definition
+        # return jsonResponse
+
     @property
     def url(self):
         return self._feature_server_url
@@ -254,12 +239,12 @@ class AGOLFeatureServer(object):
         return self._item_id
 
     @property
-    def feature_server_definition(self, where='1=1'):
-        parameters = urllib.parse.urlencode({'where': where,
-                                             'f': 'json'}).encode("utf-8")
-        request_url = self._feature_server_url
-        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
-        return jsonResponse
+    def service_definition(self):
+        return self._service_definition
+
+    @property
+    def service_definition_template(self):
+        return self._service_definition_template
 
     @property
     def layers(self):
@@ -273,19 +258,78 @@ class AGOLFeatureServerLayer(object):
     def __init__(self, feature_server_layer_url, agol_handler=None):
         self._agol_handler = agol_handler
         self._feature_server_layer_url = feature_server_layer_url
-        self._name = ''
-        self._layer_id = ''
+        self._service_definition = self.__service_definition()
+        self._service_definition_template = self.__service_definition_template()
+        self._name = self._service_definition['name']
+        self._layer_id = self._service_definition['id']
+        self._type = self._service_definition['type']
 
-    def get_feature_count(self):
+    def write_jsonfile(self, returned_json, filename='\json_file'):
+        print(returned_json)
+        with open(filename + '.json', 'w') as outfile:
+            json.dump(returned_json, outfile, sort_keys=False, indent=4, ensure_ascii=False)
+
+    def add_features(self, agol_json):
+        parameters = {'features': agol_json,
+                      'f': 'json'}
+        if self._agol_handler: parameters['token'] = self._agol_handler.token
+        parameters = urllib.parse.urlencode(parameters).encode("utf-8")
+        print(str(self._layer_id))
+        request = self._feature_service_url + '/{}/addFeatures?'.format(self.layer_id)
+        print(request)
+        try:
+            json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
+            if 'deleteResults' in json_response:
+                return json_response
+            elif 'error' in json_response:
+                print(json_response['error']['code'])
+                print(json_response['error']['message'])
+                for detail in json_response['error']['details']:
+                    print(detail)
+        except ValueError as e:
+            print('An unspecified error occurred.')
+            print(e)
+
+    def delete_features(self, where='ObjectId>0'):
+        parameters = {'where': where,
+                      'f': 'pjson'}
+        if self._agol_handler: parameters['token'] = self._agol_handler.token
+        parameters = urllib.parse.urlencode(parameters).encode("utf-8")
+        request = self._feature_service_url + '/{}/deleteFeatures?'.format(self.layer_id)
+        try:
+            json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
+            if 'deleteResults' in json_response:
+                return json_response
+            elif 'error' in json_response:
+                print(json_response['error']['code'])
+                print(json_response['error']['message'])
+                for detail in json_response['error']['details']:
+                    print(detail)
+        except ValueError as e:
+            print('An unspecified error occurred.')
+            print(e)
+
+    def __service_definition(self):
+        parameters = urllib.parse.urlencode({'f': 'json'}).encode("utf-8")
+        request_url = self._feature_server_layer_url
+        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
+        return jsonResponse
+
+    def __service_definition_template(self):
+        """only need specific portions of the entire service definition to create a 'copy'"""
+        # self._service_definition
+        # return jsonResponse
+
+    def __get_feature_count(self):
         parameters = urllib.parse.urlencode({'where': '1=1',
                                              'returnCountOnly': 'true',
                                              'f': 'json'}).encode("utf-8")
-        jsonResponse = json.loads(urllib.request.urlopen(self._feature_service_url + '/{}/query?'.format(self.layer_id),
+        jsonResponse = json.loads(urllib.request.urlopen(self._feature_server_layer_url + '/{}/query?'.format(self.layer_id),
                                                          parameters).read().decode("utf-8"))
         return jsonResponse['count']
 
     @property
-    def feature_layer_json(self, where='1=1', fields='*'):
+    def features(self, where='1=1', fields='*'):
         parameters = urllib.parse.urlencode({'where': where,
                                              'objectIds': '',
                                              'time': '',
@@ -313,66 +357,31 @@ class AGOLFeatureServerLayer(object):
         return jsonResponse
 
     @property
-    def feature_layer_definition(self, where='1=1'):
-        parameters = urllib.parse.urlencode({'where': where,
-                                             'f': 'json'}).encode("utf-8")
-        request_url = self._feature_service_url + '/{}'.format(self._layer_id)
-        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
-        return jsonResponse
+    def service_definition(self):
+        return self._service_definition
 
-    def add_features(self, agol_json):
-        parameters = {'features': agol_json,
-                      'f': 'json'}
-        if self._agol_handler: parameters['token'] = self._agol_handler.token
-        parameters = urllib.parse.urlencode(parameters).encode("utf-8")
-        print(str(self._layer_id))
-        request = self._feature_service_url + '/{}/addFeatures?'.format(self.layer_id)
-        print(request)
-        try:
-            json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
-            if 'deleteResults' in json_response:
-                return json_response
-            elif 'error' in json_response:
-                print(json_response['error']['code'])
-                print(json_response['error']['message'])
-                for detail in json_response['error']['details']:
-                    print(detail)
-        except ValueError as e:
-            print('An unspecified error occurred.')
-            print(e)
-
-    def delete_features(self, where='ObjectId>0'):
-        parameters = {'where': where,
-                      'f': 'json'}
-        if self._agol_handler: parameters['token'] = self._agol_handler.token
-        parameters = urllib.parse.urlencode(parameters).encode("utf-8")
-        request = self._feature_service_url + '/{}/deleteFeatures?'.format(self.layer_id)
-        try:
-            json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
-            if 'deleteResults' in json_response:
-                return json_response
-            elif 'error' in json_response:
-                print(json_response['error']['code'])
-                print(json_response['error']['message'])
-                for detail in json_response['error']['details']:
-                    print(detail)
-        except ValueError as e:
-            print('An unspecified error occurred.')
-            print(e)
+    @property
+    def service_definition_template(self):
+        return self._service_definition_template
 
     @property
     def url(self):
         return self._feature_service_url
 
-
     @property
-    def feature_count(self):
-        return self.get_feature_count()
-
-
+    def name(self):
+        return self._name
     @property
     def layer_id(self):
         return self._layer_id
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def feature_count(self):
+        return self.__get_feature_count()
 
 
 class AGOLItems(object):
