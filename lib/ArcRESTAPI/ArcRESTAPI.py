@@ -33,7 +33,7 @@ class AGOLHandler(object):
       -Adds/Deletes features from Feature Service
     """
 
-    def __init__(self, username, password, sourcePortal='https://www.arcgis.com/'):
+    def __init__(self, username, password, sourcePortal='https://www.arcgis.com'):
         self.username = username
         self.password = password
         self.sourcePortal = sourcePortal
@@ -145,21 +145,20 @@ class AGOLHandler(object):
 
     def copy_feature_server(self, feature_server_url, feature_server_name):
         copied_feature_server = AGOLFeatureServer(feature_server_url, feature_server_name)
-        self.__create_feature_service(copied_feature_server.service_definition_template)
-        """copy service definition"""
+        self.__create_feature_service(copied_feature_server.createParameters_template)
+        self.__add_layers(copied_feature_server)
+        return copied_feature_server.url
 
-        """update layer definition"""
-
-        """add features"""
-
-    def __create_feature_service(self, serice_definition_template):
-        user_content_url = 'https://www.arcgis.com/sharing/rest/content/users/{}'.format(self.username)
-        parameters = urllib.parse.urlencode({'createParameters': serice_definition_template,
-                                             'outputType': 'featureService',
-                                             'f': 'json',
-                                             'token': self.token}).encode("utf-8")
+    def __create_feature_service(self, create_parameters):
+        user_content_url = self.sourcePortal + "/sharing/rest/content/users/" + self.username
+        parameters = urllib.parse.urlencode({"createParameters": create_parameters,
+                                             "outputType": "featureService",
+                                             "f": "json",
+                                             "token": self.token}).encode("utf-8")
         create_service_request = user_content_url + '/createService?'
+        print(create_service_request)
         json_response = json.loads(urllib.request.urlopen(create_service_request, parameters).read().decode("utf-8"))
+        print(json_response)
         if 'error' not in json_response:
             return AGOLFeatureServer(json_response['serviceurl'], agol_handler=self)
         else:
@@ -168,6 +167,19 @@ class AGOLHandler(object):
             print('Message: {}'.format(json_response['error'].get('message', 'None')))
             for detail in json_response['error'].get('details', []):
                 print(detail)
+
+    def __add_layers(self, copied_feature_server):
+        # add service definition for each layer in one rest call
+        layers = []
+        for layer in copied_feature_server.layers:
+            self.__add_layer(layer)
+        # add features to the layers
+
+    def __add_layer(self, layer):
+        pass
+
+    def __add_features(self, layer):
+        pass
 
     @property
     def user_items(self):
@@ -192,7 +204,7 @@ class AGOLFeatureServer(object):
         self._feature_server_name = feature_server_name
         self._agol_handler = agol_handler
         self._service_definition = self.__service_definition()
-        self._service_definition_template = self.__service_definition_template()
+        self._create_parameters_template = self.__get_create_parameters()
         self._item_id = ''
         self._layers = []
         self.get_layers()
@@ -204,7 +216,32 @@ class AGOLFeatureServer(object):
             layers.append(AGOLFeatureServerLayer(fs_layer_url, self._agol_handler))
         self._layers = layers
 
-    def add_layers_to_definition(self):
+    def write_jsonfile(self, returned_json, filename='\json_file'):
+        print(returned_json)
+        with open(filename + '.json', 'w') as outfile:
+            json.dump(returned_json, outfile, sort_keys=False, indent=4, ensure_ascii=False)
+
+    def __service_definition(self):
+        parameters = urllib.parse.urlencode({'f': 'pjson'}).encode("utf-8")
+        request_url = self._feature_server_url
+        response = urllib.request.urlopen(request_url, parameters).read().decode("utf-8")
+        print(response)
+        jsonResponse = json.loads(response)
+        jsonResponse['name'] = self._feature_server_name
+        return jsonResponse
+
+    def __get_create_parameters(self):
+        """only need specific portions of the entire service definition to create a 'copy'"""
+        createParameterTemplate = {}
+        createParameterOptions = ['name', 'serviceDescription', 'hasStaticData', 'maxRecordCount', 'supportedQueryFormats',
+                                  'capabilities', 'description', 'copyrightText', 'spatialReference', 'initialExtent',
+                                  'allowGeometryUpdates', 'units', 'xssPreventionInfo']
+        for paramater in createParameterOptions:
+            if paramater in self._service_definition:
+                createParameterTemplate[paramater] = self._service_definition[paramater]
+        return createParameterTemplate
+
+    def add_layers(self):
         layers = []
         for layer in self._layers:
             layer = {"id": layer.id, "name": layer.name}
@@ -217,18 +254,6 @@ class AGOLFeatureServer(object):
         jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
         print(jsonResponse)
         return jsonResponse
-
-    def __service_definition(self):
-        parameters = urllib.parse.urlencode({'f': 'pjson'}).encode("utf-8")
-        request_url = self._feature_server_url
-        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
-        jsonResponse['name'] = self._feature_server_name
-        return jsonResponse
-
-    def __service_definition_template(self):
-        """only need specific portions of the entire service definition to create a 'copy'"""
-        # self._service_definition
-        # return jsonResponse
 
     @property
     def url(self):
@@ -243,8 +268,8 @@ class AGOLFeatureServer(object):
         return self._service_definition
 
     @property
-    def service_definition_template(self):
-        return self._service_definition_template
+    def createParameters_template(self):
+        return self._create_parameters_template
 
     @property
     def layers(self):
@@ -259,7 +284,6 @@ class AGOLFeatureServerLayer(object):
         self._agol_handler = agol_handler
         self._feature_server_layer_url = feature_server_layer_url
         self._service_definition = self.__service_definition()
-        self._service_definition_template = self.__service_definition_template()
         self._name = self._service_definition['name']
         self._layer_id = self._service_definition['id']
         self._type = self._service_definition['type']
@@ -314,11 +338,6 @@ class AGOLFeatureServerLayer(object):
         request_url = self._feature_server_layer_url
         jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
         return jsonResponse
-
-    def __service_definition_template(self):
-        """only need specific portions of the entire service definition to create a 'copy'"""
-        # self._service_definition
-        # return jsonResponse
 
     def __get_feature_count(self):
         parameters = urllib.parse.urlencode({'where': '1=1',
