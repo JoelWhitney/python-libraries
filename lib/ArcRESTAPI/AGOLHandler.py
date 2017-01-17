@@ -18,6 +18,9 @@ __author__='joelwhitney'
 """
   Requires Python 3+
   A simple wrapper around the ArcREST API to make my life easier.... maybe.
+
+  The AGOLHandler.py helper class provides a means to connect to AGOL/Portal
+  and manage tokens.
 """
 import urllib
 import urllib.parse
@@ -28,10 +31,11 @@ from ArcRESTAPI.FeatureServices import *
 
 class AGOLHandler(object):
     """
-    ArcGIS Online handler class.
+    ArcGIS Online handler class:
       -Generates and keeps tokens
       -Allows search of content
       -Creates Feature Service
+      -Copy existing Feature Services
       -Adds/Deletes features from Feature Service
     """
 
@@ -40,6 +44,7 @@ class AGOLHandler(object):
         self.password = password
         self.sourcePortal = sourcePortal
         self.handler_token, self.http, self.expires = self.get_token()
+        self._info = self.get_info()
         self._user_items = self.get_user_content()
 
     def get_token(self, exp=60):  # expires in 60 minutes
@@ -61,6 +66,20 @@ class AGOLHandler(object):
         except ValueError as e:
             print('An unspecified error occurred.')
             print(e)
+
+    def get_info(self):
+        '''Returns the description for a Portal for ArcGIS item.'''
+        parameters = urllib.parse.urlencode({'token': self.token, 'f': 'json'}).encode("utf-8")
+        request = self.sourcePortal + '/sharing/rest/content/items?'
+        json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
+        return json_response
+
+    def get_user_info(self):
+        '''Returns the description for a Portal for ArcGIS item.'''
+        parameters = urllib.parse.urlencode({'token': self.token, 'f': 'pjson'}).encode("utf-8")
+        request = self.sourcePortal + '/sharing/rest/content/users/' + self.username + '?'
+        json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
+        return json_response
 
     def search(self, query=None, numResults=100, sortField='numviews', sortOrder='desc', start=0, token=None):
         '''Retrieve a single page of search results.'''
@@ -148,8 +167,13 @@ class AGOLHandler(object):
     def copy_feature_server(self, feature_server_url, feature_server_name):
         copied_feature_server = AGOLFeatureServer(feature_server_url, feature_server_name)
         new_feature_server = self.__create_feature_service(copied_feature_server.createParameters_template, feature_server_name)
-        #self.__add_layers(copied_feature_server)
+        new_feature_server.__add_layers(copied_feature_server.layers)
         return new_feature_server
+
+    def write_jsonfile(self, returned_json, filename='\json_file'):
+        print(returned_json)
+        with open(filename + '.json', 'w') as outfile:
+            json.dump(returned_json, outfile, sort_keys=False, indent=4, ensure_ascii=False)
 
     def __create_feature_service(self, create_parameters, feature_server_name):
         user_content_url = self.sourcePortal + "/sharing/rest/content/users/" + self.username
@@ -170,18 +194,15 @@ class AGOLHandler(object):
             for detail in json_response['error'].get('details', []):
                 print(detail)
 
-    def __add_layers(self, copied_feature_server):
-        # add service definition for each layer in one rest call
-        layers = []
-        for layer in copied_feature_server.layers:
-            self.__add_layer(layer)
-        # add features to the layers
-
     def __add_layer(self, layer):
         pass
 
     def __add_features(self, layer):
         pass
+
+    @property
+    def info(self):
+        return self._info
 
     @property
     def user_items(self):

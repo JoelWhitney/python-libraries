@@ -18,6 +18,9 @@ __author__='joelwhitney'
 """
   Requires Python 3+
   A simple wrapper around the ArcREST API to make my life easier.... maybe.
+
+  The FeatureServices.py helper class provides functions and methods for
+  modifying feature servers/services and retrieving information.
 """
 import urllib
 import urllib.parse
@@ -46,7 +49,7 @@ def stringify(response_string):
 
 class AGOLFeatureServer(object):
     """
-    Wrapper around the AGOLHandler create service function.
+    Wrapper around AGOL Feature Server.
     """
     def __init__(self, feature_server_url, feature_server_name, agol_handler=None):
         self._feature_server_url = feature_server_url
@@ -55,15 +58,7 @@ class AGOLFeatureServer(object):
         self._service_definition = self.__service_definition()
         self._create_parameters_template = self.__create_parameters_template()
         self._item_id = ''
-        self._layers = []
-        self.get_layers()
-
-    def get_layers(self):
-        layers = []
-        for layer in self.service_definition['layers']:
-            fs_layer_url = self._feature_server_url + '/{}'.format(layer['id'])
-            layers.append(AGOLFeatureServerLayer(fs_layer_url, self._agol_handler))
-        self._layers = layers
+        self._layers = self.__get_layers()
 
     def write_jsonfile(self, returned_json, filename='\json_file'):
         with open(filename + '.json', 'w') as outfile:
@@ -90,18 +85,26 @@ class AGOLFeatureServer(object):
                 createParameterTemplate[paramater] = self._service_definition[paramater]
         return createParameterTemplate
 
-    def add_layers(self):
+    def __get_layers(self):
         layers = []
-        for layer in self._layers:
-            layer = {"id": layer.id, "name": layer.name}
+        for layer in self.service_definition['layers']:
+            fs_layer_url = self._feature_server_url + '/{}'.format(layer['id'])
+            layers.append(AGOLFeatureServerLayer(fs_layer_url, self._agol_handler))
+        return layers
 
-        """UPDATE DEFINITION WITH ABOVE???"""
-        #url = 'http://services.arcgis.com/N4jtru9dctSQR53c/ArcGIS/rest/admin/services/Storm%20Discharge%20Points/FeatureServer/addToDefinition'
-        url = 'http://services.arcgis.com/{}/ArcGIS/rest/admin/services/{}/FeatureServer/addToDefinition?'.format(self.id, name )
-        parameters = urllib.parse.urlencode({'layers': [servicedefinition]}).encode("utf-8")
-        # request_url = self._feature_service_url + '/addToDefinition?'
-        jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
-        print(jsonResponse)
+    def __add_layers(self, copied_fs_layers):
+        # add service definition for each layer in one rest call
+        # url = 'http://services.arcgis.com/N4jtru9dctSQR53c/ArcGIS/rest/admin/services/Storm%20Discharge%20Points/FeatureServer/addToDefinition'
+        # url = http://services.myserver.com/OrgID/ArcGIS/rest/admin/services/example1/FeatureServer/addToDefinition
+
+        url = ''
+        layers = []
+        for layer in copied_fs_layers.layers:
+            layers.append(layer.service_definition)
+        parameters = {'layers': layers, 'f': 'pjson'}
+        if self._agol_handler is not None: parameters['token'] = self._agol_handler.token
+        parameters = urllib.parse.urlencode(parameters).encode("utf-8")
+        jsonResponse = json.loads(urllib.request.urlopen(url, parameters).read().decode("utf-8"))
         return jsonResponse
 
     @property
@@ -127,16 +130,17 @@ class AGOLFeatureServer(object):
 
 class AGOLFeatureServerLayer(object):
     """
-    Wrapper around the AGOLHandler create service function.
+    Wrapper around the Feature Server layers.
     """
     def __init__(self, feature_server_layer_url, agol_handler=None):
         self._agol_handler = agol_handler
         self._feature_server_layer_url = feature_server_layer_url
-        self._service_definition = self.__service_definition()
+        self._raw_service_definition = self.__raw_service_definition()
         self._layer_parameters_template = self.__layer_parameters_template()
-        self._name = self._service_definition['name']
-        self._layer_id = self._service_definition['id']
-        self._type = self._service_definition['type']
+        self._name = self._raw_service_definition['name']
+        self._layer_id = self._raw_service_definition['id']
+        self._type = self._raw_service_definition['type']
+        self._service_definition = self.__service_definition()
 
     def write_jsonfile(self, returned_json, filename='\json_file'):
         print(returned_json)
@@ -184,7 +188,10 @@ class AGOLFeatureServerLayer(object):
             print(e)
 
     def __service_definition(self):
-        parameters = urllib.parse.urlencode({'f': 'json'}).encode("utf-8")
+        return stringify(json.dumps(self._raw_service_definition))
+
+    def __raw_service_definition(self):
+        parameters = urllib.parse.urlencode({'f': 'pjson'}).encode("utf-8")
         request_url = self._feature_server_layer_url
         jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
         return jsonResponse
@@ -196,8 +203,8 @@ class AGOLFeatureServerLayer(object):
                                   'capabilities', 'description', 'copyrightText', 'spatialReference', 'initialExtent',
                                   'allowGeometryUpdates', 'units', 'xssPreventionInfo']
         for paramater in layerParametersOptions:
-            if paramater in self._service_definition:
-                layerParametersTemplate[paramater] = self._service_definition[paramater]
+            if paramater in self._raw_service_definition:
+                layerParametersTemplate[paramater] = self._raw_service_definition[paramater]
         return layerParametersTemplate
 
     def __get_feature_count(self):
@@ -235,6 +242,10 @@ class AGOLFeatureServerLayer(object):
         request_url = self._feature_service_url + '/{}/query?'.format(self._layer_id)
         jsonResponse = json.loads(urllib.request.urlopen(request_url, parameters).read().decode("utf-8"))
         return jsonResponse
+
+    @property
+    def raw_service_definition(self):
+        return self._raw_service_definition
 
     @property
     def service_definition(self):
