@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import json
 from ArcRESTAPI.FeatureServices import *
-
+from ArcRESTAPI.Portal import *
 
 class AGOLHandler(object):
     """
@@ -44,7 +44,8 @@ class AGOLHandler(object):
         self.password = password
         self.sourcePortal = sourcePortal
         self.handler_token, self.http, self.expires = self.get_token()
-        self._info = self.get_info()
+        self._portal = self.get_portal_info()
+        self._user_info = self.get_user_info()
         self._user_items = self.get_user_content()
 
     def get_token(self, exp=60):  # expires in 60 minutes
@@ -73,6 +74,13 @@ class AGOLHandler(object):
         request = self.sourcePortal + '/sharing/rest/content/items?'
         json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
         return json_response
+
+    def get_portal_info(self):
+        '''Returns the description for a Portal for ArcGIS item.'''
+        parameters = urllib.parse.urlencode({'token': self.token, 'f': 'json'}).encode("utf-8")
+        request = self.sourcePortal + '/sharing/rest/portals/self?'
+        json_response = json.loads(urllib.request.urlopen(request, parameters).read().decode("utf-8"))
+        return Portal(json_response)
 
     def get_user_info(self):
         '''Returns the description for a Portal for ArcGIS item.'''
@@ -166,8 +174,11 @@ class AGOLHandler(object):
 
     def copy_feature_server(self, feature_server_url, feature_server_name):
         copied_feature_server = AGOLFeatureServer(feature_server_url, feature_server_name)
+        print(copied_feature_server.layers)
+        for layer in copied_feature_server.layers:
+            print(layer.service_definition)
         new_feature_server = self.__create_feature_service(copied_feature_server.createParameters_template, feature_server_name)
-        new_feature_server.__add_layers(copied_feature_server.layers)
+        new_feature_server = new_feature_server.add_layers(copied_feature_server.layers)
         return new_feature_server
 
     def write_jsonfile(self, returned_json, filename='\json_file'):
@@ -203,6 +214,10 @@ class AGOLHandler(object):
     @property
     def info(self):
         return self._info
+
+    @property
+    def portal(self):
+        return self._portal
 
     @property
     def user_items(self):
